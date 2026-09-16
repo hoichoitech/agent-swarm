@@ -218,6 +218,7 @@ const VALIDATED_KEYS: Record<string, ConfigValidator> = {
     "GITHUB_DISABLE",
     "GITLAB_DISABLE",
     "LINEAR_DISABLE",
+    "LINEAR_ISSUE_CREATE_TRIAGE",
     "JIRA_DISABLE",
     "AGENTMAIL_DISABLE",
     "ADDITIVE_SLACK",
