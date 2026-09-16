@@ -761,6 +761,82 @@ export async function handleIssueDelete(event: Record<string, unknown>): Promise
  * Handle "prompted" AgentSession events — user sent a follow-up message
  * in the Linear agent chat UI.
  */
+/**
+ * Triage a newly-created Linear issue. Gated by LINEAR_ISSUE_CREATE_TRIAGE.
+ *
+ * Upstream routes Issue `update` and `remove` but not `create`, so a fresh
+ * ticket triggers nothing. With the flag on, a create spins a bounded triage
+ * task whose prompt (linear.issue.created) ends in one of three outcomes:
+ * a clarifying question, conflicting evidence, or a request to implement.
+ * It never mutates the issue on its own.
+ */
+export async function handleIssueCreate(event: Record<string, unknown>): Promise<void> {
+  if (process.env.LINEAR_ISSUE_CREATE_TRIAGE !== "true") return;
+
+  const data = event.data as Record<string, unknown> | undefined;
+  if (!data) return;
+  const issueId = String(data.id ?? "");
+  if (!issueId) return;
+
+  // Do not triage a ticket the swarm just created itself — avoid a loop where
+  // an SRE/Player finding files a ticket that then triggers its own triage.
+  const already = await getTrackerSyncByExternalId("linear", "task", issueId);
+  if (already) {
+    console.log(`[Linear Sync] Issue ${issueId} already tracked, skipping create-triage`);
+    return;
+  }
+
+  const issueIdentifier = String(data.identifier ?? "");
+  const issueTitle = String(data.title ?? "");
+  const issueUrl = String(data.url ?? "");
+  const creator = data.creator as Record<string, unknown> | undefined;
+  const creatorName = creator ? String(creator.name ?? "") : "";
+  const description = String(data.description ?? "").trim();
+
+  const lead = await findLeadAgent();
+  const requestedByUserId = await resolveLinearActor(
+    creator ? String(creator.id ?? "") : "",
+    creator ? String(creator.email ?? "") : "",
+    creatorName,
+    ((event.organizationId ?? event.workspaceId) as string | null) ?? null,
+    "Issue.create",
+    description || issueTitle || null,
+  );
+
+  const rendered = resolveTemplate("linear.issue.created", {
+    issue_identifier: issueIdentifier,
+    issue_title: issueTitle,
+    issue_url: issueUrl,
+    creator_name: creatorName || "unknown",
+    session_section: "",
+    description_section: description ? `\nDescription:\n${description}` : "\n(no description)",
+  });
+
+  const task = await createTaskWithSiblingAwareness(rendered.text, {
+    agentId: lead?.id ?? "",
+    source: "linear",
+    taskType: "linear-issue",
+    requestedByUserId,
+    contextKey: `linear:issue:${issueId}`,
+  });
+
+  await createTrackerSync({
+    provider: "linear",
+    entityType: "task",
+    providerEntityType: "Issue",
+    swarmId: task.id,
+    externalId: issueId,
+    externalIdentifier: issueIdentifier,
+    externalUrl: issueUrl,
+    lastSyncOrigin: "external",
+    syncDirection: "inbound",
+  });
+
+  console.log(
+    `[Linear Sync] Create-triage task ${task.id} for new issue ${issueIdentifier || issueId}`,
+  );
+}
+
 export async function handleAgentSessionPrompted(event: Record<string, unknown>): Promise<void> {
   const agentSession = event.agentSession as Record<string, unknown> | undefined;
   if (!agentSession) {

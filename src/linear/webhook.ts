@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   handleAgentSessionEvent,
   handleAgentSessionPrompted,
+  handleIssueCreate,
   handleIssueDelete,
   handleIssueUpdate,
 } from "./sync";
@@ -54,7 +55,9 @@ async function processWebhookEvent(
 
   // Handle Issue events
   if (type === "Issue") {
-    if (action === "update") {
+    if (action === "create") {
+      await handleIssueCreate(event);
+    } else if (action === "update") {
       await handleIssueUpdate(event, deliveryId);
     } else if (action === "remove") {
       await handleIssueDelete(event);
